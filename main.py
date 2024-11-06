@@ -51,36 +51,32 @@ async def configure(config_payload: ConfigPayload):
     except Exception as e:
         raise HTTPException(status_code=500, detail="Failed to connect to SAP HANA DB")
 
-    # Fetch and process documents from SAP HANA
-    cursor = connection.cursor()
-    cursor.execute("SELECT TABLE_NAME FROM SYS.TABLES WHERE SCHEMA_NAME = 'DBADMIN'")
-    tables = [row[0] for row in cursor.fetchall()]
-    documents = []
-    print(documents)
-    for table_name in tables:
-        cursor.execute(f'SELECT * FROM "{table_name}"')
-        rows = cursor.fetchall()
-        for row in rows:
-            combined_text = ",".join(str(value) if value else 'NULL' for value in row)
-            document = Document(page_content=combined_text.strip(), metadata={"table": table_name})
-            documents.append(document)
-
-    # Define the SentenceTransformer model
+    # Initialize vector DB and embedding model with reduced memory usage
     embedding_model = selected_model.get("embedding") or "intfloat/multilingual-e5-small"
     embed = SentenceTransformerEmbeddings(model_name=embedding_model)
-
-    # Set up vector DB
     vector_db = HanaDB(
         embedding=embed,
         connection=connection,
         table_name="VECTORTABLE"
     )
-    vector_db.add_documents(documents)
-    print("succesfully completed embedding")
+
+    # Fetch and process documents in small batches to manage memory
+    cursor = connection.cursor()
+    cursor.execute("SELECT TABLE_NAME FROM SYS.TABLES WHERE SCHEMA_NAME = 'DBADMIN'")
+    tables = [row[0] for row in cursor.fetchall()]
+    
+    for table_name in tables:
+        cursor.execute(f'SELECT * FROM "{table_name}" LIMIT 100')  # Fetching only 100 rows at a time
+        rows = cursor.fetchall()
+        for row in rows:
+            combined_text = ",".join(str(value) if value else 'NULL' for value in row)
+            document = Document(page_content=combined_text.strip(), metadata={"table": table_name})
+            vector_db.add_documents([document])  # Directly add to vector DB
+
     # Configure the Hugging Face model
     llm = HuggingFaceEndpoint(
         repo_id=selected_model.get("textGeneration") or "mistralai/Mistral-7B-Instruct-v0.3",
-        huggingfacehub_api_token="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"
+        huggingfacehub_api_token="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"  # Replace with actual token
     )
 
     # Define prompt template
@@ -95,12 +91,12 @@ async def configure(config_payload: ConfigPayload):
 
     return {"message": "Configuration completed successfully"}
 
+
 @app.post("/query")
 async def query(query_payload: QueryPayload):
     global retrieval_chain, vector_db
     user_query = query_payload.input
 
-    # Retrieve documents through similarity search
     try:
         docs = vector_db.similarity_search(user_query, k=2)
         combined_context = "\n\n".join([doc.page_content for doc in docs])
@@ -114,5 +110,3 @@ async def query(query_payload: QueryPayload):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-# Run the FastAPI app (if running locally, use `uvicorn main:app --reload`)
