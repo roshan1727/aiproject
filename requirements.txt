@@ -1,8 +1,7 @@
-fastapi 
-uvicorn
-hdbcli 
-langchain
+fastapi==0.95.2
+uvicorn==0.22.0
+hdbcli==2.11.20
+langchain==0.0.234
+sentence-transformers==2.2.2
+huggingface_hub==0.16.4
 Document
-sentence-transformers
-huggingface_hub
-langchain_community
